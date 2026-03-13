@@ -63,6 +63,33 @@ export default [
     component: () => import("../views/dashboard/index.vue"),
   },
   {
+    path: "/quartel",
+    name: "quartel",
+    meta: {
+      title: "Quarteis",
+      authRequired: true,
+    },
+    component: () => import("../views/quartel/list_quartel.vue"),
+  },
+  {
+    path: "/autoridade",
+    name: "autoridade",
+    meta: {
+      title: "Autoridades",
+      authRequired: true,
+    },
+    component: () => import("../views/autoridade/list_autoridade.vue"),
+  },
+  {
+    path: "/sos",
+    name: "sos",
+    meta: {
+      title: "SOS / Alertas",
+      authRequired: true,
+    },
+    component: () => import("../views/sos/list_sos.vue"),
+  },
+  {
     path: "/dashboard/crypto",
     name: "dashboard-crypto",
     meta: {

@@ -232,6 +232,24 @@ export default {
             <span data-key="t-dashboards"> {{ $t("t-dashboards") }}</span>
           </router-link>
         </li>
+        <li class="nav-item">
+          <router-link to="/quartel" class="nav-link">
+            <i class="ri-building-line"></i>
+            <span>Quarteis</span>
+          </router-link>
+        </li>
+        <li class="nav-item">
+          <router-link to="/autoridade" class="nav-link">
+            <i class="ri-user-star-line"></i>
+            <span>Autoridades</span>
+          </router-link>
+        </li>
+        <li class="nav-item">
+          <router-link to="/sos" class="nav-link">
+            <i class="ri-alarm-warning-line"></i>
+            <span>SOS</span>
+          </router-link>
+        </li>
         <template v-if="false">
         <li class="nav-item">
           <BLink class="nav-link menu-link" href="#sidebarApps" data-bs-toggle="collapse" role="button"
