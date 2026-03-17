@@ -17,6 +17,11 @@ export default [
       },
     },
   },
+  // Alias para evitar "No match found for location with path /login-admin"
+  {
+    path: "/login-admin",
+    redirect: { name: "login" },
+  },
   {
     path: "/register",
     name: "Register",
@@ -72,6 +77,15 @@ export default [
     component: () => import("../views/quartel/list_quartel.vue"),
   },
   {
+    path: "/primeiros-socorros",
+    name: "primeiros-socorros",
+    meta: {
+      title: "Primeiros Socorros",
+      authRequired: true,
+    },
+    component: () => import("../views/primeiros_socorros/list_primeiros_socorros.vue"),
+  },
+  {
     path: "/autoridade",
     name: "autoridade",
     meta: {
@@ -88,6 +102,15 @@ export default [
       authRequired: true,
     },
     component: () => import("../views/sos/list_sos.vue"),
+  },
+  {
+    path: "/livekit-test",
+    name: "livekit-test",
+    meta: {
+      title: "LiveKit Test",
+      authRequired: true,
+    },
+    component: () => import("../views/livekit_test.vue"),
   },
   {
     path: "/dashboard/crypto",

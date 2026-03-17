@@ -63,7 +63,8 @@
     "vue3-echarts": "^1.1.0",
     "vue3-google-map": "^0.21.1",
     "vuex": "^4.1.0",
-    "yarn": "^1.22.22"
+    "yarn": "^1.22.22",
+    "livekit-client": "^2.9.0"
   },
   "devDependencies": {
     "@achrinza/node-ipc": "^10.1.11",

@@ -33,6 +33,27 @@
           <div v-if="submitted && !form.tipo" class="invalid-feedback">Selecione o tipo.</div>
         </BCol>
         <BCol md="6">
+          <label class="form-label">Província</label>
+          <BFormSelect
+            v-model="form.id_provincia"
+            :options="provinciaOptions"
+            class="form-select"
+            :disabled="loadingProvincias"
+            @change="onProvinciaChange"
+          />
+          <div v-if="loadingProvincias" class="small text-muted mt-1"><i class="ri-loader-4-line spin me-1"></i> A carregar...</div>
+        </BCol>
+        <BCol md="6">
+          <label class="form-label">Município</label>
+          <BFormSelect
+            v-model="form.id_municipio"
+            :options="municipioOptions"
+            class="form-select"
+            :disabled="!form.id_provincia || loadingMunicipios"
+          />
+          <div v-if="form.id_provincia && loadingMunicipios" class="small text-muted mt-1"><i class="ri-loader-4-line spin me-1"></i> A carregar...</div>
+        </BCol>
+        <BCol md="6">
           <label class="form-label">Latitude</label>
           <input
             v-model.number="form.latitude"
@@ -141,6 +162,7 @@
 <script>
 import { LMap, LTileLayer, LMarker } from '@vue-leaflet/vue-leaflet';
 import { latLng } from 'leaflet';
+import api from '@/services/api';
 
 // Centro de Angola (aproximado)
 const ANGOLA_CENTER = latLng(-12.3, 17.5);
@@ -167,6 +189,10 @@ export default {
       leafletMap: null,
       mapTileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       mapAttribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a>',
+      provincias: [],
+      municipios: [],
+      loadingProvincias: false,
+      loadingMunicipios: false,
       tipoOptions: [
         { value: '', text: 'Selecione o tipo' },
         { value: 'policia', text: 'Quartel da polícia' },
@@ -176,6 +202,8 @@ export default {
       form: {
         nome: '',
         tipo: '',
+        id_provincia: null,
+        id_municipio: null,
         latitude: '',
         longitude: '',
         ativo: true,
@@ -183,6 +211,16 @@ export default {
     };
   },
   computed: {
+    provinciaOptions() {
+      const list = [{ value: null, text: 'Selecione a província' }];
+      this.provincias.forEach((p) => list.push({ value: p.id, text: p.nome }));
+      return list;
+    },
+    municipioOptions() {
+      const list = [{ value: null, text: 'Selecione o município' }];
+      this.municipios.forEach((m) => list.push({ value: m.id, text: m.nome }));
+      return list;
+    },
     mapCenter() {
       const lat = Number(this.form.latitude);
       const lng = Number(this.form.longitude);
@@ -213,23 +251,73 @@ export default {
           this.form = {
             nome: this.quartel.nome,
             tipo: this.quartel.tipo,
+            id_provincia: this.quartel.id_provincia ?? null,
+            id_municipio: this.quartel.id_municipio ?? null,
             latitude: this.quartel.latitude,
             longitude: this.quartel.longitude,
             ativo: this.quartel.ativo !== false,
           };
+          this.fetchProvincias().then(() => {
+            if (this.form.id_provincia) {
+              this.fetchMunicipios(this.form.id_provincia);
+            } else {
+              this.municipios = [];
+            }
+          });
         } else {
           this.form = {
             nome: '',
             tipo: '',
+            id_provincia: null,
+            id_municipio: null,
             latitude: '',
             longitude: '',
             ativo: true,
           };
+          this.municipios = [];
+          this.fetchProvincias();
         }
       }
     },
   },
   methods: {
+    async fetchProvincias() {
+      if (this.provincias.length > 0) return;
+      this.loadingProvincias = true;
+      try {
+        const { data } = await api.get('/localizacao/provincias');
+        this.provincias = Array.isArray(data) ? data : [];
+      } catch {
+        this.provincias = [];
+      } finally {
+        this.loadingProvincias = false;
+      }
+    },
+    async fetchMunicipios(idProvincia) {
+      if (!idProvincia) {
+        this.municipios = [];
+        return;
+      }
+      this.loadingMunicipios = true;
+      this.municipios = [];
+      try {
+        const { data } = await api.get('/localizacao/municipios', {
+          params: { id_provincia: idProvincia },
+        });
+        this.municipios = Array.isArray(data) ? data : [];
+      } catch {
+        this.municipios = [];
+      } finally {
+        this.loadingMunicipios = false;
+      }
+    },
+    onProvinciaChange() {
+      this.form.id_municipio = null;
+      this.municipios = [];
+      if (this.form.id_provincia) {
+        this.fetchMunicipios(this.form.id_provincia);
+      }
+    },
     onMapReady(mapInstance) {
       if (!mapInstance) return;
       this.leafletMap = mapInstance;
@@ -302,12 +390,14 @@ export default {
       }
     },
     selectSuggestion(item) {
+      const displayName = item.display_name || this.searchQuery || '';
       const latNum = parseFloat(item.lat);
       const lonNum = parseFloat(item.lon);
       if (Number.isFinite(latNum) && Number.isFinite(lonNum)) {
         this.form.latitude = Math.round(latNum * 1e6) / 1e6;
         this.form.longitude = Math.round(lonNum * 1e6) / 1e6;
-        this.searchQuery = item.display_name || this.searchQuery;
+        this.searchQuery = displayName;
+        this.form.nome = displayName;
         if (this.leafletMap) {
           this.leafletMap.setView([latNum, lonNum], 16);
         }
@@ -343,7 +433,9 @@ export default {
           this.searchError = 'Local não encontrado. Tente outro nome ou endereço (Angola).';
           return;
         }
-        const { lat, lon } = data[0];
+        const first = data[0];
+        const { lat, lon } = first;
+        const displayName = first.display_name || this.searchQuery || '';
         const latNum = parseFloat(lat);
         const lonNum = parseFloat(lon);
         if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
@@ -352,6 +444,8 @@ export default {
         }
         this.form.latitude = Math.round(latNum * 1e6) / 1e6;
         this.form.longitude = Math.round(lonNum * 1e6) / 1e6;
+        this.form.nome = displayName;
+        this.searchQuery = displayName;
         if (this.leafletMap) {
           this.leafletMap.setView([latNum, lonNum], 16);
         }
@@ -379,6 +473,8 @@ export default {
           payload: {
             nome: this.form.nome.trim(),
             tipo: this.form.tipo,
+            id_provincia: this.form.id_provincia || null,
+            id_municipio: this.form.id_municipio || null,
             latitude: Number(this.form.latitude),
             longitude: Number(this.form.longitude),
             ativo: this.form.ativo,

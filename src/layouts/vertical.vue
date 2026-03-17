@@ -22,24 +22,22 @@ export default {
   computed: {
     ...layoutComputed,
     },
-  created: () => {
+  created() {
     document.body.removeAttribute("data-layout", "horizontal");
     document.body.removeAttribute("data-topbar", "dark");
     document.body.removeAttribute("data-layout-size", "boxed");
-    // this.updateSidebarSize();
+    if (!document.documentElement.getAttribute("data-sidebar")) {
+      document.documentElement.setAttribute("data-sidebar", "dark");
+    }
   },
   methods: {
     updateSidebarSize() {
-      let sidebarSize = ''
-      // Check window.screen.width and update the data-sidebar-size attribute
+      let sidebarSize = "";
       if (window.innerWidth < 1025) {
-        this.sidebarSize = "sm";
-        sidebarSize = 'sm'
+        sidebarSize = "sm";
       } else {
-        this.sidebarSize = "lg"; // Reset sidebarSize if screen width is >= 1025
-        sidebarSize = 'lg'
+        sidebarSize = "lg";
       }
-      // Update the data-sidebar-size attribute of document.documentElement
       document.documentElement.setAttribute("data-sidebar-size", sidebarSize);
     },
 
@@ -115,22 +113,14 @@ export default {
       <div class="app-menu navbar-menu">
         <!-- LOGO SOS Angola -->
         <div class="navbar-brand-box">
-          <!-- Dark Logo (sidebar claro) -->
-          <router-link to="/" class="logo logo-dark">
-            <span class="logo-sm">
-              <img src="@/assets/logo-sos.jpeg" alt="SOS Angola" height="26" class="rounded" />
-            </span>
-            <span class="logo-lg">
-              <img src="@/assets/logo-sos.jpeg" alt="SOS Angola" height="32" class="rounded" />
-            </span>
-          </router-link>
-          <!-- Light Logo (sidebar escuro) -->
+          <!-- Logo único (usa variações de cor via tema) -->
           <router-link to="/" class="logo logo-light">
             <span class="logo-sm">
               <img src="@/assets/logo-sos.jpeg" alt="SOS Angola" height="26" class="rounded" />
             </span>
-            <span class="logo-lg">
+            <span class="logo-lg d-flex align-items-center">
               <img src="@/assets/logo-sos.jpeg" alt="SOS Angola" height="32" class="rounded" />
+              <span class="logo-text ms-2 text-white">SOS Angola</span>
             </span>
           </router-link>
           <BButton size="sm" class="p-0 fs-20 header-item float-end btn-vertical-sm-hover"
@@ -164,3 +154,34 @@ export default {
     <RightBar />
   </div>
 </template>
+
+<style scoped>
+.navbar-brand-box .logo-lg {
+  justify-content: center;
+}
+.logo-dark .logo-text {
+  color: var(--vz-body-color, #212529);
+  font-weight: 600;
+}
+.logo-light .logo-text {
+  font-weight: 600;
+}
+</style>
+<!-- Quando a barra lateral está reduzida: esconder texto "SOS Angola" e o logo duplicado no topbar -->
+<style>
+[data-layout="vertical"] .app-menu .navbar-brand-box .logo-sm {
+  /* Na barra lateral usamos apenas um logo (o maior) para evitar duplicação */
+  display: none !important;
+}
+[data-sidebar-size="sm"] .app-menu .navbar-brand-box .logo-text,
+[data-sidebar-size="sm-hover"] .app-menu .navbar-brand-box .logo-text {
+  display: none !important;
+}
+[data-sidebar-size="sm"] .app-menu .navbar-brand-box .logo-lg .logo-text,
+[data-sidebar-size="sm-hover"] .app-menu .navbar-brand-box .logo-lg .logo-text {
+  display: none !important;
+}
+[data-layout="vertical"]:is([data-sidebar-size="sm"], [data-sidebar-size="sm-hover"]) #page-topbar .navbar-brand-box.horizontal-logo {
+  display: none !important;
+}
+</style>

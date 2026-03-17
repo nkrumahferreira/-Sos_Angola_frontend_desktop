@@ -1,13 +1,11 @@
 /**
  * Cliente HTTP para a API SOS Angola (backend).
- * Base URL: VUE_APP_API_BASE_URL + /api/v1
- * Interceptors: envio do token Bearer e tratamento de 401.
+ * Base URL: usa host da página em browser (acesso via IP LAN) ou VUE_APP_API_BASE_URL.
  */
 import axios from 'axios';
+import { getApiBaseUrl } from '@/utils/apiBase';
 
-const baseURL = process.env.VUE_APP_API_BASE_URL
-  ? `${process.env.VUE_APP_API_BASE_URL.replace(/\/$/, '')}/api/v1`
-  : 'http://localhost:8000/api/v1';
+const baseURL = `${getApiBaseUrl()}/api/v1`;
 
 const api = axios.create({
   baseURL,

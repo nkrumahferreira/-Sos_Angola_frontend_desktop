@@ -94,8 +94,8 @@ export function configureFakeBackend() {
                     return;
                 }
 
-                // pass through any requests not handled above
-                realFetch(url, opts).then(response => resolve(response));
+                // pass through any requests not handled above (API real, ex.: live-token)
+                realFetch(url, opts).then(response => resolve(response)).catch(err => reject(err));
 
             }, 500);
         });

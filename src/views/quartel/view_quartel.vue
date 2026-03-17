@@ -41,6 +41,18 @@
         </BCol>
         <BCol md="6">
           <div class="mb-2">
+            <span class="text-muted small">Província</span>
+            <p class="mb-0">{{ quartel.nome_provincia || '—' }}</p>
+          </div>
+        </BCol>
+        <BCol md="6">
+          <div class="mb-2">
+            <span class="text-muted small">Município</span>
+            <p class="mb-0">{{ quartel.nome_municipio || '—' }}</p>
+          </div>
+        </BCol>
+        <BCol md="6">
+          <div class="mb-2">
             <span class="text-muted small">Latitude</span>
             <p class="mb-0">{{ quartel.latitude }}</p>
           </div>

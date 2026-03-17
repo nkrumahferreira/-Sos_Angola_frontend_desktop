@@ -116,10 +116,55 @@
                 <p class="mb-0">{{ alerta.id_cidadao }}</p>
               </div>
             </BCol>
-            <BCol md="6" v-if="alerta.id_autoridade_atribuida != null">
+            <BCol md="6" v-if="alerta.id_autoridade_atribuida != null && !(alerta.id_quarteis_atribuidos && alerta.id_quarteis_atribuidos.length)">
               <div class="mb-2">
                 <span class="text-muted small">ID Autoridade atribuída</span>
                 <p class="mb-0">{{ alerta.id_autoridade_atribuida }}</p>
+              </div>
+            </BCol>
+            <BCol cols="12" v-if="alerta.id_quarteis_atribuidos && alerta.id_quarteis_atribuidos.length">
+              <div class="mb-2">
+                <span class="text-muted small">Quarteis atribuídos</span>
+                <p class="mb-0">
+                  <span v-for="id in alerta.id_quarteis_atribuidos" :key="id">
+                    <BBadge variant="primary" class="me-1">{{ quartelNomePorId(id) }}</BBadge>
+                  </span>
+                </p>
+              </div>
+            </BCol>
+            <BCol cols="12" v-if="podeAtribuirQuarteis" class="mt-2">
+              <div class="rounded border p-3 bg-light">
+                <span class="text-muted small d-block mb-2">Atribuir a quarteis</span>
+                <p class="small text-muted mb-2">Os quarteis mais próximos do SOS aparecem primeiro. Selecione um ou mais; todas as autoridades vinculadas receberão o alerta.</p>
+                <div class="mb-2">
+                  <label class="form-label small text-muted mb-1">Pesquisar quartel</label>
+                  <BFormInput
+                    v-model="quartelSearchQuery"
+                    type="text"
+                    size="sm"
+                    placeholder="Nome ou tipo do quartel..."
+                    class="form-control-sm"
+                  />
+                </div>
+                <BFormSelect
+                  v-model="atribuirQuarteisSelected"
+                  :options="quarteisOptions"
+                  multiple
+                  :disabled="atribuirQuarteisLoading || quarteisLoading"
+                  size="sm"
+                  class="mb-2"
+                />
+                <p v-if="quarteisOrdenadosFiltrados.length === 0 && !quarteisLoading" class="small text-muted mb-0">Nenhum quartel encontrado.</p>
+                <div v-if="atribuirQuarteisError" class="small text-danger mb-2">{{ atribuirQuarteisError }}</div>
+                <BButton
+                  size="sm"
+                  variant="primary"
+                  :disabled="atribuirQuarteisLoading || !atribuirQuarteisSelected.length"
+                  @click="atribuirQuarteis"
+                >
+                  <span v-if="atribuirQuarteisLoading"><i class="ri-loader-4-line spin me-1"></i> A atribuir...</span>
+                  <span v-else><i class="ri-group-2-line me-1"></i> Atribuir quarteis</span>
+                </BButton>
               </div>
             </BCol>
           </BRow>
@@ -337,6 +382,12 @@
             >
               {{ liveStatusText }}
             </p>
+            <div v-if="liveStatus === 'waiting' || liveStatus === 'error'" class="mb-2">
+              <BButton size="sm" variant="outline-primary" @click="reconnectLive">
+                <i class="ri-refresh-line me-1"></i> Tentar novamente
+              </BButton>
+              <span v-if="liveStatus === 'waiting'" class="small text-muted ms-2">(use «Tentar novamente» para refrescar a ligação)</span>
+            </div>
             <div class="d-flex gap-2 flex-wrap">
               <BButton
                 size="sm"
@@ -396,13 +447,13 @@
 import { LMap, LTileLayer, LMarker } from '@vue-leaflet/vue-leaflet';
 import { latLng } from 'leaflet';
 import api from '@/services/api';
+import { getApiBaseUrl } from '@/utils/apiBase';
+import { Room, RoomEvent } from 'livekit-client';
 
 const ESTADOS_ATIVOS = ['pendente', 'em_atendimento'];
 
 function getWsAlertasUrl() {
-  const base = process.env.VUE_APP_API_BASE_URL
-    ? process.env.VUE_APP_API_BASE_URL.replace(/\/$/, '')
-    : 'http://localhost:8000';
+  const base = getApiBaseUrl();
   const wsBase = base.replace(/^http/, 'ws');
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jwt') : null;
   const url = `${wsBase}/api/v1/ws/alertas`;
@@ -426,6 +477,7 @@ export default {
       mapAttribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a>',
       mapZoom: 15,
       ws: null,
+      wsAlertaId: null,
       wsConnected: false,
       leafletMap: null,
       activeTab: 0,
@@ -439,14 +491,69 @@ export default {
       videoRefs: {},
       videoErro: {},
       estadosAtivos: ESTADOS_ATIVOS,
-      liveWs: null,
-      livePc: null,
+      liveRoom: null,
       liveStatus: 'idle',
       liveStatusText: '',
       liveCamera: 'back',
+      liveRetryIntervalId: null,
+      liveStatsIntervalId: null,
+      quarteis: [],
+      quarteisLoading: false,
+      atribuirQuarteisSelected: [],
+      atribuirQuarteisLoading: false,
+      atribuirQuarteisError: null,
+      quartelSearchQuery: '',
     };
   },
   computed: {
+    podeAtribuirQuarteis() {
+      return this.alerta && ESTADOS_ATIVOS.includes(this.alerta.estado);
+    },
+    posicaoSos() {
+      if (!this.alerta) return null;
+      const lat = Number(this.alerta.ultima_latitude ?? this.alerta.latitude);
+      const lng = Number(this.alerta.ultima_longitude ?? this.alerta.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+      return null;
+    },
+    quarteisOrdenadosFiltrados() {
+      const pos = this.posicaoSos;
+      let list = this.quarteis.filter((q) => {
+        const qLat = Number(q.latitude);
+        const qLng = Number(q.longitude);
+        return Number.isFinite(qLat) && Number.isFinite(qLng);
+      });
+      if (pos) {
+        list = list.slice().sort((a, b) => {
+          const dA = this.distanciaKm(pos.lat, pos.lng, Number(a.latitude), Number(a.longitude));
+          const dB = this.distanciaKm(pos.lat, pos.lng, Number(b.latitude), Number(b.longitude));
+          return dA - dB;
+        });
+      }
+      const q = (this.quartelSearchQuery || '').trim().toLowerCase();
+      if (q) {
+        list = list.filter((qu) => {
+          const nome = (qu.nome || '').toLowerCase();
+          const tipo = this.tipoLabelQuartel(qu.tipo || '').toLowerCase();
+          return nome.includes(q) || tipo.includes(q);
+        });
+      }
+      return list;
+    },
+    quarteisOptions() {
+      const pos = this.posicaoSos;
+      return this.quarteisOrdenadosFiltrados.map((q) => {
+        let suf = '';
+        if (pos) {
+          const km = this.distanciaKm(pos.lat, pos.lng, Number(q.latitude), Number(q.longitude));
+          suf = ` — ${km < 1 ? (km * 1000).toFixed(0) + ' m' : km.toFixed(1) + ' km'}`;
+        }
+        return {
+          value: q.id,
+          text: `${q.nome} (${this.tipoLabelQuartel(q.tipo)})${suf}`,
+        };
+      });
+    },
     markerLatLng() {
       if (!this.alerta) return null;
       const lat = Number(this.alerta.ultima_latitude ?? this.alerta.latitude);
@@ -468,9 +575,7 @@ export default {
       const url = this.cidadao.fotografia_url;
       if (url && typeof url === 'string') {
         if (url.startsWith('http')) return url;
-        const base = process.env.VUE_APP_API_BASE_URL
-          ? process.env.VUE_APP_API_BASE_URL.replace(/\/$/, '')
-          : 'http://localhost:8000';
+        const base = getApiBaseUrl();
         return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
       }
       return null;
@@ -486,7 +591,7 @@ export default {
       return m[this.liveStatus] || 'bg-secondary text-white';
     },
     liveCanSwitchCamera() {
-      return this.liveStatus === 'live' && this.liveWs && this.liveWs.readyState === WebSocket.OPEN;
+      return false;
     },
   },
   watch: {
@@ -545,8 +650,9 @@ export default {
       this.leafletMap = map;
     },
     connectWs() {
-      this.closeWs();
       if (!this.alertaId || !this.alerta || !ESTADOS_ATIVOS.includes(this.alerta.estado) || !this.show) return;
+      if (this.ws && this.wsAlertaId === this.alertaId) return;
+      this.closeWs();
       try {
         const url = getWsAlertasUrl();
         const socket = new WebSocket(url);
@@ -555,6 +661,7 @@ export default {
         };
         socket.onclose = () => {
           this.ws = null;
+          this.wsAlertaId = null;
           this.wsConnected = false;
         };
         socket.onmessage = (event) => {
@@ -567,6 +674,8 @@ export default {
               if (this.leafletMap && Number.isFinite(lat) && Number.isFinite(lng)) {
                 this.leafletMap.setView([lat, lng], this.leafletMap.getZoom());
               }
+            } else if (msg.evento === 'alerta_atribuido' && msg.alerta && msg.alerta.id === this.alertaId) {
+              this.alerta = { ...this.alerta, ...msg.alerta };
             }
           } catch {
             // ignora mensagens inválidas
@@ -576,6 +685,7 @@ export default {
           this.closeWs();
         };
         this.ws = socket;
+        this.wsAlertaId = this.alertaId;
       } catch {
         this.wsConnected = false;
       }
@@ -589,6 +699,7 @@ export default {
         }
         this.ws = null;
       }
+      this.wsAlertaId = null;
       this.wsConnected = false;
     },
     tipoLabel(tipo) {
@@ -627,6 +738,24 @@ export default {
       };
       return map[estado] || 'secondary';
     },
+    tipoLabelQuartel(tipo) {
+      const map = { policia: 'Polícia', bombeiros: 'Bombeiros', saude: 'Saúde' };
+      return map[tipo] || tipo;
+    },
+    quartelNomePorId(id) {
+      const q = this.quarteis.find((x) => x.id === id);
+      return q ? q.nome : `#${id}`;
+    },
+    distanciaKm(lat1, lng1, lat2, lng2) {
+      const R = 6371;
+      const dLat = ((lat2 - lat1) * Math.PI) / 180;
+      const dLng = ((lng2 - lng1) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    },
     formatDate(val) {
       if (!val) return '—';
       try {
@@ -654,78 +783,221 @@ export default {
       }
     },
     onTabLive() {
-      if (this.activeTab === 3) {
-        this.connectLive();
-      }
+      if (this.activeTab === 3) this.connectLive();
     },
-    getLiveWsUrl() {
-      const base = process.env.VUE_APP_API_BASE_URL
-        ? process.env.VUE_APP_API_BASE_URL.replace(/\/$/, '')
-        : 'http://localhost:8000';
-      const wsBase = base.replace(/^http/, 'ws');
-      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jwt') : null;
-      if (!token || !this.alertaId) return null;
-      return `${wsBase}/api/v1/ws/live/${this.alertaId}?role=autoridade&token=${encodeURIComponent(token)}`;
-    },
-    connectLive() {
+    async connectLive() {
       this.disconnectLive();
       if (!this.alertaId || !this.alerta || !ESTADOS_ATIVOS.includes(this.alerta.estado) || this.activeTab !== 3) return;
-      const url = this.getLiveWsUrl();
-      if (!url) {
-        this.liveStatus = 'error';
-        this.liveStatusText = 'Token em falta. Faça login como autoridade.';
-        return;
-      }
       this.liveStatus = 'connecting';
-      this.liveStatusText = 'A conectar ao servidor de signaling…';
+      this.liveStatusText = 'A obter acesso à sala…';
       try {
-        const ws = new WebSocket(url);
-        ws.onopen = () => {
-          this.liveStatus = 'waiting';
-          this.liveStatusText = 'Ligado. À espera de oferta do cidadão…';
-        };
-        ws.onmessage = (ev) => this.handleLiveMessage(ev);
-        ws.onerror = () => {
+        const { data } = await api.post(`/alertas/${this.alertaId}/live-token`, { role: 'autoridade' });
+        let url = (data && data.url) || '';
+        const token = (data && data.token) || '';
+        if (!url || !token) {
           this.liveStatus = 'error';
-          this.liveStatusText = 'Erro de ligação WebSocket.';
+          this.liveStatusText = 'Resposta inválida do servidor (falta url ou token).';
+          return;
+        }
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+          url = (url.startsWith('https') ? 'wss:' : 'ws:') + url.slice(url.indexOf('://'));
+        } else if (url && !url.startsWith('ws')) {
+          url = `wss://${url.replace(/^https?:\/\//, '')}`;
+        }
+        this.liveStatusText = 'A conectar ao LiveKit…';
+        // Desativar adaptiveStream e dynacast para o servidor enviar sempre vídeo (evita inbound-rtp video vazio)
+        const room = new Room({
+          adaptiveStream: false,
+          dynacast: false,
+        });
+
+        // PASSO 9: debug ConnectionStateChanged
+        room.on(RoomEvent.ConnectionStateChanged, (state) => {
+          console.log('[LiveKit DEBUG] ConnectionStateChanged', state);
+        });
+
+        const attachVideoTrack = (track, publication) => {
+          if (track.kind !== 'video') return;
+          this.liveStatus = 'live';
+          this.liveStatusText = 'Em direto';
+          this.clearLiveRetryTimer();
+          const ref = this.$refs.liveRemoteVideo;
+          const video = ref && (ref.$el || ref);
+          if (!video || video.tagName !== 'VIDEO') {
+            console.warn('[LiveKit DEBUG] attachVideoTrack: sem elemento video válido');
+            return;
+          }
+          // Log estado da publication antes de forçar subscrição
+          const pubSubscribedBefore = publication ? publication.isSubscribed : 'N/A';
+          if (publication && typeof publication.setSubscribed === 'function') {
+            publication.setSubscribed(true);
+          }
+          console.log('[LiveKit DEBUG] publication video', {
+            isSubscribedBefore: pubSubscribedBefore,
+            isSubscribedAfter: publication ? publication.isSubscribed : 'N/A',
+          });
+          track.attach(video);
+          video.muted = true;
+          video.playsInline = true;
+          video.autoplay = true;
+          video.load(); // força o elemento a carregar o stream
+          video.play().catch(() => {});
+
+          const tryPlay = () => {
+            if (video.paused && video.readyState >= 2) {
+              video.play().catch(() => {});
+            }
+          };
+          video.onloadedmetadata = () => {
+            console.log('[LiveKit DEBUG] video.onloadedmetadata', { videoWidth: video.videoWidth, videoHeight: video.videoHeight });
+            tryPlay();
+          };
+          video.onloadeddata = tryPlay;
+          video.onplaying = () => {
+            console.log('[LiveKit DEBUG] video.onplaying');
+          };
+          // Repetir play após um pouco (o stream pode chegar com atraso)
+          setTimeout(tryPlay, 300);
+          setTimeout(tryPlay, 1000);
+
+          // PASSO 2: depois de attach — logar estado do video
+          console.log('[LiveKit DEBUG] após attach', {
+            videoReadyState: video.readyState,
+            videoVideoWidth: video.videoWidth,
+            videoVideoHeight: video.videoHeight,
+            videoSrcObject: video.srcObject,
+            srcObjectTracks: video.srcObject ? video.srcObject.getTracks().map((t) => ({ kind: t.kind, readyState: t.readyState, enabled: t.enabled })) : null,
+          });
+          if (typeof track.getStats === 'function') {
+            track.getStats().then((stats) => console.log('[LiveKit DEBUG] videoTrack.getStats()', stats)).catch((e) => console.warn('[LiveKit DEBUG] videoTrack.getStats() erro', e));
+          }
         };
-        ws.onclose = () => {
-          this.liveWs = null;
+
+        // PASSO 1: TrackSubscribed — logs detalhados do track + publication.isSubscribed
+        room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          console.log('TRACK SUBSCRIBED', {
+            participant: participant?.identity,
+            kind: track.kind,
+            publicationSubscribed: publication?.isSubscribed,
+          });
+          console.log('[LiveKit DEBUG] TrackSubscribed', {
+            trackKind: track.kind,
+            trackSid: track.sid,
+            trackIsMuted: track.isMuted,
+            mediaStreamTrackReadyState: track.mediaStreamTrack?.readyState,
+            mediaStreamTrackEnabled: track.mediaStreamTrack?.enabled,
+            participantIdentity: participant?.identity,
+          });
+          attachVideoTrack(track, publication);
+        });
+        // eslint-disable-next-line no-unused-vars -- callback assinatura LiveKit (track) não usada
+        room.on(RoomEvent.TrackUnsubscribed, (track) => {
+          const video = this.$refs.liveRemoteVideo;
+          const el = video && (video.$el || video);
+          if (el && el.srcObject) el.srcObject = null;
+        });
+        room.on(RoomEvent.Disconnected, () => {
           if (this.liveStatus === 'connecting' || this.liveStatus === 'waiting' || this.liveStatus === 'live') {
             this.liveStatus = 'error';
-            this.liveStatusText = 'Ligação fechada.';
+            this.liveStatusText = 'Ligação ao LiveKit fechada.';
           }
-          if (this.livePc) {
-            try {
-              this.livePc.close();
-            } catch (_) {
-              /* ignora ao fechar peer connection */
+        });
+        await room.connect(url, token, { autoSubscribe: true });
+        this.liveRoom = room;
+
+        // Log completo: participantes e publicações
+        const participantsLog = [];
+        room.remoteParticipants.forEach((p) => {
+          const pubs = [];
+          p.trackPublications.forEach((pub) => {
+            pubs.push({ sid: pub.trackSid, kind: pub.kind, isSubscribed: pub.isSubscribed, hasTrack: !!pub.track });
+          });
+          participantsLog.push({ identity: p.identity, sid: p.sid, trackPublications: pubs });
+        });
+        console.log('[LiveKit DEBUG] Participantes conectados após connect', participantsLog);
+
+        // Tracks já publicados quando entrámos na sala
+        for (const participant of room.remoteParticipants.values()) {
+          participant.trackPublications.forEach((pub) => {
+            console.log('[LiveKit DEBUG] track existente ao entrar', { trackSid: pub.trackSid, kind: pub.kind, isSubscribed: pub.isSubscribed, hasTrack: !!pub.track });
+            if (pub.kind === 'video') {
+              if (pub.isSubscribed && pub.track) {
+                attachVideoTrack(pub.track, pub);
+              } else {
+                if (typeof pub.setSubscribed === 'function') {
+                  pub.setSubscribed(true);
+                }
+                if (pub.track) {
+                  attachVideoTrack(pub.track, pub);
+                }
+              }
             }
-            this.livePc = null;
+          });
+        }
+
+        // Debug: WebRTC stats do subscriber a cada 3s
+        const statsIntervalId = setInterval(async () => {
+          if (!this.liveRoom || this.liveRoom !== room) {
+            clearInterval(statsIntervalId);
+            return;
           }
-        };
-        this.liveWs = ws;
-      } catch (e) {
+          try {
+            const sub = room.engine?.pcManager?.subscriber;
+            if (sub) {
+              const stats = await sub.getStats();
+              console.log('WEBRTC STATS', stats);
+            }
+          } catch (e) {
+            console.warn('[LiveKit DEBUG] getStats erro', e);
+          }
+        }, 3000);
+        this.liveStatsIntervalId = statsIntervalId;
+
+        if (this.liveStatus !== 'live') {
+          this.liveStatus = 'waiting';
+          this.liveStatusText = 'Ligado. À espera de transmissão do cidadão…';
+        }
+      } catch (err) {
         this.liveStatus = 'error';
-        this.liveStatusText = e?.message || 'Erro ao conectar.';
+        const msg = err.response?.data?.detail || err.message || 'Erro ao conectar.';
+        this.liveStatusText = typeof msg === 'string' ? msg : JSON.stringify(msg);
       }
     },
-    disconnectLive() {
-      if (this.livePc) {
-        try {
-          this.livePc.close();
-        } catch (_) {
-          /* ignora ao fechar peer connection */
-        }
-        this.livePc = null;
+    clearLiveRetryTimer() {
+      if (this.liveRetryIntervalId) {
+        clearInterval(this.liveRetryIntervalId);
+        this.liveRetryIntervalId = null;
       }
-      if (this.liveWs) {
-        try {
-          this.liveWs.close();
-        } catch (_) {
-          /* ignora ao fechar WebSocket */
+      if (this.liveStatsIntervalId) {
+        clearInterval(this.liveStatsIntervalId);
+        this.liveStatsIntervalId = null;
+      }
+    },
+    startLiveRetryTimer() {
+      this.clearLiveRetryTimer();
+      this.liveRetryIntervalId = setInterval(() => {
+        if (this.liveStatus !== 'waiting' || this.activeTab !== 3) {
+          this.clearLiveRetryTimer();
+          return;
         }
-        this.liveWs = null;
+        this.reconnectLive();
+      }, 12000);
+    },
+    reconnectLive() {
+      this.clearLiveRetryTimer();
+      this.disconnectLive();
+      this.connectLive();
+    },
+    disconnectLive() {
+      this.clearLiveRetryTimer();
+      this.liveStatsIntervalId = null;
+      if (this.liveRoom) {
+        try {
+          this.liveRoom.disconnect();
+        } catch (_) {
+          /* ignorar ao fechar */
+        }
+        this.liveRoom = null;
       }
       const video = this.$refs.liveRemoteVideo;
       if (video && video.srcObject) {
@@ -733,60 +1005,10 @@ export default {
       }
       this.liveStatus = 'idle';
       this.liveStatusText = '';
-      this.liveCamera = 'back';
     },
-    handleLiveMessage(ev) {
-      try {
-        const msg = JSON.parse(ev.data);
-        const type = (msg.type || '').toLowerCase();
-        const payload = msg.payload;
-        const camera = (msg.camera || 'back').toLowerCase();
-        if (type === 'offer') {
-          this.handleLiveOffer(payload);
-          this.liveCamera = camera === 'front' ? 'front' : 'back';
-        } else if (type === 'ice' && this.livePc && payload) {
-          this.livePc.addIceCandidate(new RTCIceCandidate(payload)).catch(() => {});
-        }
-      } catch {
-        this.liveStatus = 'error';
-        this.liveStatusText = 'Erro ao processar mensagem.';
-      }
-    },
-    async handleLiveOffer(offerSdp) {
-      if (this.livePc) {
-        this.livePc.close();
-        this.livePc = null;
-      }
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      });
-      pc.ontrack = (e) => {
-        if (e.streams && e.streams[0]) {
-          const video = this.$refs.liveRemoteVideo;
-          if (video) {
-            video.srcObject = e.streams[0];
-          }
-          this.liveStatus = 'live';
-          this.liveStatusText = 'Em direto';
-        }
-      };
-      pc.onicecandidate = (e) => {
-        if (e.candidate && this.liveWs && this.liveWs.readyState === WebSocket.OPEN) {
-          this.liveWs.send(JSON.stringify({ type: 'ice', payload: e.candidate }));
-        }
-      };
-      await pc.setRemoteDescription(new RTCSessionDescription(offerSdp));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      if (this.liveWs && this.liveWs.readyState === WebSocket.OPEN) {
-        this.liveWs.send(JSON.stringify({ type: 'answer', payload: answer }));
-      }
-      this.livePc = pc;
-    },
+    // eslint-disable-next-line no-unused-vars
     switchLiveCamera(which) {
-      if (!this.liveCanSwitchCamera || !this.liveWs) return;
-      this.liveWs.send(JSON.stringify({ type: 'switch_camera', payload: which }));
-      this.liveCamera = which;
+      /* Câmara é controlada pelo cidadão no telemóvel; autoridades apenas consomem. */
     },
     setVideoRef(id, el) {
       if (el) this.videoRefs[id] = el;
@@ -805,9 +1027,7 @@ export default {
     },
     /** URL para reproduzir vídeo: usa stream-video com headers e Range para o browser conseguir reproduzir. Outras mídias usam uploads. */
     midiaVideoUrl(m) {
-      const base = process.env.VUE_APP_API_BASE_URL
-        ? process.env.VUE_APP_API_BASE_URL.replace(/\/$/, '')
-        : 'http://localhost:8000';
+      const base = getApiBaseUrl();
       const path = (m.url_path || '').replace(/^\//, '');
       if (m.tipo === 'video') {
         return `${base}/api/v1/stream-video/${path}`;
@@ -855,10 +1075,38 @@ export default {
       try {
         const { data } = await api.get(`/alertas/${this.alertaId}`);
         this.alerta = data;
+        this.fetchQuarteis();
       } catch (err) {
         this.error = err.response?.data?.detail || err.message || 'Erro ao carregar os dados do alerta.';
       } finally {
         this.loading = false;
+      }
+    },
+    async fetchQuarteis() {
+      this.quarteisLoading = true;
+      try {
+        const { data } = await api.get('/quarteis/', { params: { limit: 200 } });
+        this.quarteis = Array.isArray(data) ? data : [];
+      } catch (_) {
+        this.quarteis = [];
+      } finally {
+        this.quarteisLoading = false;
+      }
+    },
+    async atribuirQuarteis() {
+      if (!this.alertaId || !this.atribuirQuarteisSelected.length) return;
+      this.atribuirQuarteisLoading = true;
+      this.atribuirQuarteisError = null;
+      try {
+        const { data } = await api.patch(`/alertas/${this.alertaId}/atribuir`, {
+          id_quarteis: this.atribuirQuarteisSelected.map(Number),
+        });
+        this.alerta = { ...this.alerta, ...data };
+        this.atribuirQuarteisSelected = [];
+      } catch (err) {
+        this.atribuirQuarteisError = err.response?.data?.detail || err.message || 'Erro ao atribuir quarteis.';
+      } finally {
+        this.atribuirQuarteisLoading = false;
       }
     },
   },
@@ -931,6 +1179,13 @@ export default {
 .view-sos-modal :deep(.modal-body) {
   max-height: 85vh;
   overflow-y: auto;
+}
+.spin {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>
 

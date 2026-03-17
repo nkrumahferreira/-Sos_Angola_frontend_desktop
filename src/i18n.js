@@ -43,6 +43,7 @@ const dateTimeFormats = {
 };
 
 export default createI18n({
+  legacy: false, // Composition API mode (vue-i18n v11+)
   locale: process.env.VUE_APP_I18N_LOCALE || 'en',
   fallbackLocale: process.env.VUE_APP_I18N_FALLBACK_LOCALE || 'en',
   messages: loadLocaleMessages(),

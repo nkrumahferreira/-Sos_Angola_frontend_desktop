@@ -4,6 +4,7 @@ import { latLng } from "leaflet";
 import Layout from "@/layouts/main.vue";
 import ViewSos from "@/views/sos/view_sos.vue";
 import api from "@/services/api";
+import { getApiBaseUrl } from "@/utils/apiBase";
 
 const ANGOLA_CENTER = latLng(-12.3, 17.5);
 const ANGOLA_ZOOM = 5;
@@ -17,6 +18,7 @@ export default {
     return {
       userName: "",
       quarteis: [],
+      provincias: [],
       mapLoading: true,
       mapError: null,
       showViewSos: false,
@@ -29,6 +31,21 @@ export default {
       alertasAtivos: [],
       wsAlertas: null,
       routeByAlertaId: {},
+      filterTipo: null,
+      filterProvinciaId: null,
+      filterModo: "todos",
+      userHasInteracted: false,
+      alertAudioContext: null,
+      // Estatísticas para cards e gráficos
+      statsResumo: null,
+      statsResumoLoading: false,
+      statsResumoError: null,
+      statsUltimos30Dias: [],
+      statsUltimos30DiasLoading: false,
+      statsTopQuarteis: [],
+      statsTopQuarteisLoading: false,
+      statsTopAreas: [],
+      statsTopAreasLoading: false,
     };
   },
   computed: {
@@ -38,6 +55,32 @@ export default {
         const lng = Number(q.longitude);
         return Number.isFinite(lat) && Number.isFinite(lng);
       });
+    },
+    quartelIdsEmOcorrencia() {
+      const ids = new Set();
+      this.allRouteSegments.forEach((seg) => {
+        if (seg.quartelId) ids.add(seg.quartelId);
+      });
+      return ids;
+    },
+    quarteisFiltrados() {
+      let list = this.quarteisComCoordenadas;
+      if (this.filterModo === "nenhum") return [];
+      if (this.filterTipo) {
+        list = list.filter((q) => (q.tipo || "").toLowerCase() === this.filterTipo);
+      }
+      if (this.filterProvinciaId) {
+        list = list.filter((q) => q.id_provincia === this.filterProvinciaId);
+      }
+      if (this.filterModo === "em_ocorrencia") {
+        list = list.filter((q) => this.quartelIdsEmOcorrencia.has(q.id));
+      }
+      return list;
+    },
+    provinciaOptions() {
+      const opts = [{ value: null, text: "Todas as províncias" }];
+      this.provincias.forEach((p) => opts.push({ value: p.id, text: p.nome }));
+      return opts;
     },
     alertasComPosicao() {
       return this.alertasAtivos.filter((a) => {
@@ -54,14 +97,77 @@ export default {
       });
       return out;
     },
+    // Dados para gráficos (ApexCharts)
+    chartUltimos30DiasSeries() {
+      const data = this.statsUltimos30Dias || [];
+      return [
+        {
+          name: "Ocorrências",
+          data: data.map((d) => d.total),
+        },
+      ];
+    },
+    chartUltimos30DiasOptions() {
+      const data = this.statsUltimos30Dias || [];
+      return {
+        chart: { type: "bar", toolbar: { show: false }, height: 260 },
+        dataLabels: { enabled: false },
+        stroke: { curve: "smooth", width: 2 },
+        xaxis: {
+          categories: data.map((d) =>
+            new Date(d.dia).toLocaleDateString("pt-AO", { day: "2-digit", month: "2-digit" })
+          ),
+          labels: { rotate: -45 },
+        },
+        yaxis: { labels: { formatter: (v) => Math.round(v) } },
+        colors: ["#0d6efd"],
+      };
+    },
+    chartTopQuarteisSeries() {
+      const data = this.statsTopQuarteis || [];
+      return [
+        {
+          name: "Ocorrências",
+          data: data.map((d) => d.total_alertas),
+        },
+      ];
+    },
+    chartTopQuarteisOptions() {
+      const data = this.statsTopQuarteis || [];
+      return {
+        chart: { type: "bar", toolbar: { show: false }, height: 260 },
+        plotOptions: { bar: { horizontal: true } },
+        dataLabels: { enabled: false },
+        xaxis: {
+          categories: data.map((d) => d.nome_quartel),
+          labels: { formatter: (v) => Math.round(v) },
+        },
+        colors: ["#198754"],
+      };
+    },
+    chartTopAreasSeries() {
+      const data = this.statsTopAreas || [];
+      return data.map((d) => d.total_alertas);
+    },
+    chartTopAreasOptions() {
+      const data = this.statsTopAreas || [];
+      return {
+        chart: { type: "donut", height: 260 },
+        labels: data.map((d) => d.area),
+        legend: { position: "bottom" },
+      };
+    },
   },
   mounted() {
     this.setUserName();
+    this.fetchProvincias();
     this.fetchQuarteis().then(() => {
       this.fetchAlertasAtivos();
     });
+    this.fetchDashboardStats();
     this.connectWsAlertas();
     document.addEventListener("fullscreenchange", this.onFullscreenChange);
+    this.unlockAudioOnFirstInteraction();
     if (typeof Notification !== "undefined" && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
@@ -69,6 +175,11 @@ export default {
   beforeUnmount() {
     this.disconnectWsAlertas();
     document.removeEventListener("fullscreenchange", this.onFullscreenChange);
+    document.removeEventListener("click", this.handleFirstUserInteraction);
+    document.removeEventListener("keydown", this.handleFirstUserInteraction);
+    if (this.alertAudioContext && this.alertAudioContext.close) {
+      this.alertAudioContext.close().catch(() => {});
+    }
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
     }
@@ -80,13 +191,27 @@ export default {
       return { lat: Number(lat), lng: Number(lng) };
     },
     getWsAlertasUrl() {
-      const base = process.env.VUE_APP_API_BASE_URL
-        ? process.env.VUE_APP_API_BASE_URL.replace(/\/$/, "")
-        : "http://localhost:8000";
+      const base = getApiBaseUrl();
       const wsBase = base.replace(/^http/, "ws");
       const token = typeof localStorage !== "undefined" ? localStorage.getItem("jwt") : null;
       if (!token) return null;
       return `${wsBase}/api/v1/ws/alertas?token=${encodeURIComponent(token)}`;
+    },
+    handleFirstUserInteraction() {
+      if (this.userHasInteracted) return;
+      this.userHasInteracted = true;
+      document.removeEventListener("click", this.handleFirstUserInteraction);
+      document.removeEventListener("keydown", this.handleFirstUserInteraction);
+      const C = typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext);
+      if (C) {
+        const ctx = new C();
+        if (ctx.resume) ctx.resume().then(() => {}).catch(() => {});
+        this.alertAudioContext = ctx;
+      }
+    },
+    unlockAudioOnFirstInteraction() {
+      document.addEventListener("click", this.handleFirstUserInteraction, { once: false });
+      document.addEventListener("keydown", this.handleFirstUserInteraction, { once: false });
     },
     connectWsAlertas() {
       this.disconnectWsAlertas();
@@ -121,10 +246,22 @@ export default {
       this.notificarNovoSOS(alerta);
     },
     playAlertaSonoro() {
+      if (!this.userHasInteracted || !this.alertAudioContext) return;
       try {
-        const C = typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext);
-        if (!C) return;
-        const ctx = new C();
+        const ctx = this.alertAudioContext;
+        if (ctx.state === "suspended" && ctx.resume) {
+          ctx.resume().then(() => this.playAlertaSonoroBeep()).catch(() => {});
+          return;
+        }
+        this.playAlertaSonoroBeep();
+      } catch (_) {
+        /* ignore */
+      }
+    },
+    playAlertaSonoroBeep() {
+      try {
+        const ctx = this.alertAudioContext;
+        if (!ctx) return;
         const play = (frequency, start, duration) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
@@ -145,6 +282,7 @@ export default {
       }
     },
     vibrarAlerta() {
+      if (!this.userHasInteracted) return;
       try {
         if (typeof navigator !== "undefined" && navigator.vibrate) {
           navigator.vibrate([200, 100, 200, 100, 200]);
@@ -290,7 +428,7 @@ export default {
           Number(q.latitude),
           Number(q.longitude)
         );
-        return { latlngs, color: colors[tipo] || "#666", quartelNome: q.nome, tipo };
+        return { latlngs, color: colors[tipo] || "#666", quartelNome: q.nome, quartelId: q.id, tipo };
       });
       const results = await Promise.all(promises);
       const segments = results.filter(Boolean);
@@ -327,6 +465,14 @@ export default {
       const map = { policia: "Polícia", bombeiros: "Bombeiros", saude: "Saúde" };
       return map[tipo] || tipo;
     },
+    async fetchProvincias() {
+      try {
+        const { data } = await api.get("/localizacao/provincias");
+        this.provincias = Array.isArray(data) ? data : [];
+      } catch (_) {
+        this.provincias = [];
+      }
+    },
     async fetchQuarteis() {
       this.mapLoading = true;
       this.mapError = null;
@@ -337,6 +483,37 @@ export default {
         this.mapError = err.response?.data?.detail || err.message || "Erro ao carregar quarteis.";
       } finally {
         this.mapLoading = false;
+      }
+    },
+    async fetchDashboardStats() {
+      // Resumo
+      this.statsResumoLoading = true;
+      this.statsResumoError = null;
+      try {
+        const { data } = await api.get("/alertas/estatisticas/resumo");
+        this.statsResumo = data;
+      } catch (err) {
+        this.statsResumoError = err.response?.data?.detail || err.message || "Erro ao carregar resumo.";
+      } finally {
+        this.statsResumoLoading = false;
+      }
+      // Últimos 30 dias, top quarteis, top áreas em paralelo
+      this.statsUltimos30DiasLoading = true;
+      this.statsTopQuarteisLoading = true;
+      this.statsTopAreasLoading = true;
+      try {
+        const [rDias, rQuarteis, rAreas] = await Promise.allSettled([
+          api.get("/alertas/estatisticas/ultimos-30-dias"),
+          api.get("/alertas/estatisticas/top-quarteis", { params: { limit: 5 } }),
+          api.get("/alertas/estatisticas/top-areas", { params: { limit: 5 } }),
+        ]);
+        if (rDias.status === "fulfilled") this.statsUltimos30Dias = rDias.value.data || [];
+        if (rQuarteis.status === "fulfilled") this.statsTopQuarteis = rQuarteis.value.data || [];
+        if (rAreas.status === "fulfilled") this.statsTopAreas = rAreas.value.data || [];
+      } finally {
+        this.statsUltimos30DiasLoading = false;
+        this.statsTopQuarteisLoading = false;
+        this.statsTopAreasLoading = false;
       }
     },
   },
@@ -352,14 +529,47 @@ export default {
         </div>
       </BCol>
     </BRow>
-    <BRow>
-      <BCol cols="12">
-        <BCard no-body class="mb-3">
-          <BCardBody class="p-4">
-            <h5 class="card-title mb-3">Bem-vindo ao painel SOS Angola</h5>
-            <p class="text-muted mb-0">
-              Olá, {{ userName }}. Esta é a área das autoridades. Utilize o menu para aceder às funcionalidades.
-            </p>
+    <BRow class="mb-3 row-cols-1 row-cols-sm-2 row-cols-lg-5 g-3">
+      <BCol>
+        <BCard class="h-100">
+          <BCardBody>
+            <p class="text-muted text-uppercase small mb-1">Total de ocorrências</p>
+            <h4 class="mb-0">
+              <span v-if="statsResumoLoading">...</span>
+              <span v-else>{{ statsResumo?.total ?? 0 }}</span>
+            </h4>
+          </BCardBody>
+        </BCard>
+      </BCol>
+      <BCol>
+        <BCard class="h-100">
+          <BCardBody>
+            <p class="text-muted text-uppercase small mb-1">Pendentes</p>
+            <h4 class="mb-0 text-warning">{{ statsResumo?.pendente ?? 0 }}</h4>
+          </BCardBody>
+        </BCard>
+      </BCol>
+      <BCol>
+        <BCard class="h-100">
+          <BCardBody>
+            <p class="text-muted text-uppercase small mb-1">Em atendimento</p>
+            <h4 class="mb-0 text-primary">{{ statsResumo?.em_atendimento ?? 0 }}</h4>
+          </BCardBody>
+        </BCard>
+      </BCol>
+      <BCol>
+        <BCard class="h-100">
+          <BCardBody>
+            <p class="text-muted text-uppercase small mb-1">Resolvidos</p>
+            <h4 class="mb-0 text-success">{{ statsResumo?.resolvido ?? 0 }}</h4>
+          </BCardBody>
+        </BCard>
+      </BCol>
+      <BCol>
+        <BCard class="h-100">
+          <BCardBody>
+            <p class="text-muted text-uppercase small mb-1">Cancelados</p>
+            <h4 class="mb-0 text-secondary">{{ statsResumo?.cancelado ?? 0 }}</h4>
           </BCardBody>
         </BCard>
       </BCol>
@@ -367,13 +577,57 @@ export default {
     <BRow>
       <BCol cols="12">
         <BCard no-body>
-          <BCardHeader class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <BCardHeader class="d-flex flex-wrap align-items-center gap-3">
             <h5 class="card-title mb-0">Mapa de Angola – Quarteis</h5>
-            <div class="d-flex align-items-center gap-2">
-              <BBadge variant="primary">Polícia</BBadge>
-              <BBadge variant="danger">Bombeiros</BBadge>
-              <BBadge variant="success">Saúde</BBadge>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <span class="small text-muted me-1">Tipo:</span>
+              <BButton
+                size="sm"
+                :variant="filterTipo === null ? 'primary' : 'outline-primary'"
+                @click="filterTipo = null"
+              >
+                Todos
+              </BButton>
+              <BButton
+                size="sm"
+                :variant="filterTipo === 'policia' ? 'primary' : 'outline-primary'"
+                @click="filterTipo = filterTipo === 'policia' ? null : 'policia'"
+              >
+                Polícia
+              </BButton>
+              <BButton
+                size="sm"
+                :variant="filterTipo === 'bombeiros' ? 'danger' : 'outline-danger'"
+                @click="filterTipo = filterTipo === 'bombeiros' ? null : 'bombeiros'"
+              >
+                Bombeiros
+              </BButton>
+              <BButton
+                size="sm"
+                :variant="filterTipo === 'saude' ? 'success' : 'outline-success'"
+                @click="filterTipo = filterTipo === 'saude' ? null : 'saude'"
+              >
+                Saúde
+              </BButton>
             </div>
+            <BFormSelect
+              v-model="filterProvinciaId"
+              :options="provinciaOptions"
+              size="sm"
+              class="form-select-sm"
+              style="max-width: 220px"
+            />
+            <BFormSelect
+              v-model="filterModo"
+              :options="[
+                { value: 'todos', text: 'Todos os quarteis' },
+                { value: 'em_ocorrencia', text: 'Apenas em ocorrência' },
+                { value: 'nenhum', text: 'Nenhum quartel' },
+              ]"
+              size="sm"
+              class="form-select-sm"
+              style="max-width: 200px"
+            />
           </BCardHeader>
           <BCardBody class="p-0 position-relative">
             <div v-if="mapLoading" class="dashboard-map-loading d-flex align-items-center justify-content-center">
@@ -412,7 +666,7 @@ export default {
                   :opacity="0.8"
                 />
                 <l-marker
-                  v-for="q in quarteisComCoordenadas"
+                  v-for="q in quarteisFiltrados"
                   :key="'q-' + q.id"
                   :lat-lng="latLngFor(q)"
                 >
@@ -444,12 +698,95 @@ export default {
             </div>
             <p v-if="!mapLoading && !mapError" class="small text-muted p-2 mb-0 border-top">
               <i class="ri-map-pin-line me-1"></i>
-              {{ quarteisComCoordenadas.length }} quartel(is) com localização no mapa.
+              {{ quarteisFiltrados.length }} quartel(is) visível(is) no mapa
+              <span v-if="filterTipo || filterProvinciaId || filterModo !== 'todos'" class="text-muted">(filtros ativos)</span>.
               <span v-if="alertasComPosicao.length" class="ms-2">
                 <i class="ri-alarm-warning-line me-1"></i>
                 {{ alertasComPosicao.length }} SOS ativo(s) no mapa (tempo real).
               </span>
             </p>
+          </BCardBody>
+        </BCard>
+      </BCol>
+    </BRow>
+    <BRow class="mt-3">
+      <BCol xl="6" class="mb-3">
+        <BCard>
+          <BCardHeader>
+            <h5 class="card-title mb-0">Áreas com mais ocorrências</h5>
+          </BCardHeader>
+          <BCardBody>
+            <div v-if="statsTopAreasLoading" class="text-center py-4">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">A carregar...</span>
+              </div>
+            </div>
+            <div v-else>
+              <apexchart
+                class="apex-charts"
+                height="260"
+                dir="ltr"
+                type="donut"
+                :series="chartTopAreasSeries"
+                :options="chartTopAreasOptions"
+              ></apexchart>
+              <ul class="list-unstyled mt-3 mb-0 small">
+                <li v-for="a in statsTopAreas" :key="a.area" class="d-flex justify-content-between">
+                  <span>{{ a.area }}</span>
+                  <span class="fw-medium">{{ a.total_alertas }}</span>
+                </li>
+              </ul>
+            </div>
+          </BCardBody>
+        </BCard>
+      </BCol>
+      <BCol xl="6" class="mb-3">
+        <BCard>
+          <BCardHeader>
+            <h5 class="card-title mb-0">Top 5 quarteis com mais ocorrências</h5>
+          </BCardHeader>
+          <BCardBody>
+            <div v-if="statsTopQuarteisLoading" class="text-center py-4">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">A carregar...</span>
+              </div>
+            </div>
+            <div v-else>
+              <apexchart
+                class="apex-charts"
+                height="260"
+                dir="ltr"
+                type="bar"
+                :series="chartTopQuarteisSeries"
+                :options="chartTopQuarteisOptions"
+              ></apexchart>
+            </div>
+          </BCardBody>
+        </BCard>
+      </BCol>
+    </BRow>
+    <BRow class="mt-3">
+      <BCol cols="12" class="mb-3">
+        <BCard>
+          <BCardHeader>
+            <h5 class="card-title mb-0">Ocorrências nos últimos 30 dias</h5>
+          </BCardHeader>
+          <BCardBody>
+            <div v-if="statsUltimos30DiasLoading" class="text-center py-4">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">A carregar...</span>
+              </div>
+            </div>
+            <div v-else>
+              <apexchart
+                class="apex-charts"
+                height="260"
+                dir="ltr"
+                type="bar"
+                :series="chartUltimos30DiasSeries"
+                :options="chartUltimos30DiasOptions"
+              ></apexchart>
+            </div>
           </BCardBody>
         </BCard>
       </BCol>

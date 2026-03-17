@@ -3,7 +3,7 @@
     <BRow>
       <BCol cols="12">
         <div class="page-title-box d-sm-flex align-items-center justify-content-between">
-          <h4 class="mb-sm-0">Gestão de Quarteis</h4>
+          <h4 class="mb-sm-0">Gestão de Primeiros Socorros</h4>
         </div>
       </BCol>
     </BRow>
@@ -14,7 +14,7 @@
             <div class="d-flex align-items-center flex-wrap gap-2">
               <div class="flex-grow-1">
                 <BButton variant="primary" @click="openForm">
-                  <i class="ri-add-fill me-1 align-bottom"></i> Cadastrar Quartel
+                  <i class="ri-add-fill me-1 align-bottom"></i> Cadastrar Primeiros Socorros
                 </BButton>
               </div>
             </div>
@@ -22,23 +22,23 @@
           <BCardBody class="border-bottom">
             <BRow class="g-2 align-items-end mb-0">
               <BCol md="3" sm="6">
-                <label class="form-label small text-muted mb-1">Pesquisar por nome</label>
+                <label class="form-label small text-muted mb-1">Pesquisar por título</label>
                 <BFormInput
-                  v-model="filterNome"
+                  v-model="filterTitulo"
                   type="text"
                   size="sm"
-                  placeholder="Nome do quartel..."
+                  placeholder="Título..."
                   @keyup.enter="applyFilters"
                 />
               </BCol>
               <BCol md="2" sm="6">
-                <label class="form-label small text-muted mb-1">Tipo de quartel</label>
-                <BFormSelect
-                  v-model="filterTipo"
-                  :options="filterTipoOptions"
+                <label class="form-label small text-muted mb-1">Categoria</label>
+                <BFormInput
+                  v-model="filterCategoria"
+                  type="text"
                   size="sm"
-                  class="form-select-sm"
-                  @change="applyFilters"
+                  placeholder="Ex: queimaduras"
+                  @keyup.enter="applyFilters"
                 />
               </BCol>
               <BCol md="2" sm="6">
@@ -74,54 +74,50 @@
                 <thead class="table-light">
                   <tr>
                     <th scope="col">#</th>
-                    <th scope="col">Nome</th>
-                    <th scope="col">Tipo</th>
-                    <th scope="col">Província</th>
-                    <th scope="col">Município</th>
+                    <th scope="col">Título</th>
+                    <th scope="col">Categoria</th>
+                    <th scope="col">Ordem</th>
                     <th scope="col">Ativo</th>
                     <th scope="col" style="width: 140px">Opções</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(q, index) in quarteis" :key="q.id">
+                  <tr v-for="(item, index) in items" :key="item.id">
                     <td>{{ (currentPage - 1) * perPage + index + 1 }}</td>
-                    <td>{{ q.nome }}</td>
+                    <td>{{ item.titulo }}</td>
+                    <td>{{ item.categoria }}</td>
+                    <td>{{ item.ordem }}</td>
                     <td>
-                      <BBadge :variant="tipoBadge(q.tipo)">{{ tipoLabel(q.tipo) }}</BBadge>
-                    </td>
-                    <td>{{ q.nome_provincia || '—' }}</td>
-                    <td>{{ q.nome_municipio || '—' }}</td>
-                    <td>
-                      <span v-if="q.ativo" class="badge bg-success-subtle text-success">Sim</span>
+                      <span v-if="item.ativo" class="badge bg-success-subtle text-success">Sim</span>
                       <span v-else class="badge bg-secondary-subtle text-secondary">Não</span>
                     </td>
                     <td>
                       <div class="hstack gap-1">
                         <BButton variant="soft-info" size="sm" class="btn-icon" v-b-tooltip.hover title="Visualizar"
-                          @click="openView(q.id)">
+                          @click="openView(item.id)">
                           <i class="ri-eye-fill"></i>
                         </BButton>
                         <BButton variant="soft-primary" size="sm" class="btn-icon" v-b-tooltip.hover title="Editar"
-                          @click="openForm(q)">
+                          @click="openForm(item)">
                           <i class="ri-pencil-fill"></i>
                         </BButton>
                         <BButton variant="soft-danger" size="sm" class="btn-icon" v-b-tooltip.hover title="Eliminar"
-                          @click="openDelete(q)">
+                          @click="openDelete(item)">
                           <i class="ri-delete-bin-fill"></i>
                         </BButton>
                       </div>
                     </td>
                   </tr>
-                  <tr v-if="!loading && quarteis.length === 0">
-                    <td colspan="7" class="text-center text-muted py-4">Nenhum quartel cadastrado.</td>
+                  <tr v-if="!loading && items.length === 0">
+                    <td colspan="6" class="text-center text-muted py-4">Nenhum registo de primeiros socorros.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <div v-if="!loading && (quarteis.length > 0 || currentPage > 1)" class="d-flex align-items-center justify-content-between flex-wrap gap-2 mt-3">
+            <div v-if="!loading && (items.length > 0 || currentPage > 1)" class="d-flex align-items-center justify-content-between flex-wrap gap-2 mt-3">
               <div class="text-muted small">
-                <template v-if="quarteis.length > 0">
-                  A mostrar {{ (currentPage - 1) * perPage + 1 }} a {{ (currentPage - 1) * perPage + quarteis.length }}
+                <template v-if="items.length > 0">
+                  A mostrar {{ (currentPage - 1) * perPage + 1 }} a {{ (currentPage - 1) * perPage + items.length }}
                 </template>
                 <template v-else>Nenhum registo nesta página.</template>
               </div>
@@ -140,21 +136,22 @@
       </BCol>
     </BRow>
 
-    <FormQuartel
+    <FormPrimeirosSocorros
       :show="showFormModal"
-      :quartel="quartelToEdit"
+      :item="itemToEdit"
       @close="showFormModal = false"
       @saved="onFormSaved"
+      @error="onFormError"
     />
-    <DeleteQuartel
+    <DeletePrimeirosSocorros
       :show="showDeleteModal"
-      :quartel="quartelToDelete"
+      :item="itemToDelete"
       @close="showDeleteModal = false"
       @confirm="onDeleteConfirm"
     />
-    <ViewQuartel
+    <ViewPrimeirosSocorros
       :show="showViewModal"
-      :quartel-id="quartelToViewId"
+      :item-id="itemToViewId"
       @close="showViewModal = false"
     />
 
@@ -176,31 +173,34 @@
 <script>
 import Layout from '@/layouts/main.vue';
 import api from '@/services/api';
-import FormQuartel from './form_quartel.vue';
-import DeleteQuartel from './delete_quartel.vue';
-import ViewQuartel from './view_quartel.vue';
+import FormPrimeirosSocorros from './form_primeiros_socorros.vue';
+import DeletePrimeirosSocorros from './delete_primeiros_socorros.vue';
+import ViewPrimeirosSocorros from './view_primeiros_socorros.vue';
 import ModalSucesso from '@/components/ModalSucesso.vue';
 import ModalErro from '@/components/ModalErro.vue';
 
+const BASE = 'primeiros-socorros/admin';
+
 export default {
-  name: 'ListQuartel',
-  components: { Layout, FormQuartel, DeleteQuartel, ViewQuartel, ModalSucesso, ModalErro },
+  name: 'ListPrimeirosSocorros',
+  components: {
+    Layout,
+    FormPrimeirosSocorros,
+    DeletePrimeirosSocorros,
+    ViewPrimeirosSocorros,
+    ModalSucesso,
+    ModalErro,
+  },
   data() {
     return {
-      quarteis: [],
+      items: [],
       loading: false,
       perPage: 10,
       currentPage: 1,
       hasNextPage: false,
-      filterNome: '',
-      filterTipo: '',
+      filterTitulo: '',
+      filterCategoria: '',
       filterAtivo: null,
-      filterTipoOptions: [
-        { value: '', text: 'Todos os tipos' },
-        { value: 'policia', text: 'Polícia' },
-        { value: 'bombeiros', text: 'Bombeiros' },
-        { value: 'saude', text: 'Saúde' },
-      ],
       filterAtivoOptions: [
         { value: null, text: 'Todos' },
         { value: true, text: 'Ativo' },
@@ -209,9 +209,9 @@ export default {
       showFormModal: false,
       showDeleteModal: false,
       showViewModal: false,
-      quartelToEdit: null,
-      quartelToDelete: null,
-      quartelToViewId: null,
+      itemToEdit: null,
+      itemToDelete: null,
+      itemToViewId: null,
       showSuccessModal: false,
       successTitle: 'Sucesso',
       successMessage: '',
@@ -224,34 +224,25 @@ export default {
     this.fetchList();
   },
   methods: {
-    tipoLabel(tipo) {
-      const map = { policia: 'Polícia', bombeiros: 'Bombeiros', saude: 'Saúde' };
-      return map[tipo] || tipo;
-    },
-    tipoBadge(tipo) {
-      const map = { policia: 'primary', bombeiros: 'danger', saude: 'success' };
-      return map[tipo] || 'secondary';
-    },
     async fetchList(page = 1) {
       this.loading = true;
       this.currentPage = page;
       const skip = (page - 1) * this.perPage;
       const limit = this.perPage + 1;
       const params = { skip, limit };
-      if (this.filterNome && this.filterNome.trim()) params.nome = this.filterNome.trim();
-      if (this.filterTipo) params.tipo = this.filterTipo;
+      if (this.filterCategoria && this.filterCategoria.trim()) params.categoria = this.filterCategoria.trim();
       if (this.filterAtivo !== null && this.filterAtivo !== undefined && this.filterAtivo !== '') {
         params.ativo = this.filterAtivo === true || this.filterAtivo === 'true';
       }
       try {
-        const { data } = await api.get('/quarteis/', { params });
+        const { data } = await api.get(`/${BASE}/`, { params });
         const list = Array.isArray(data) ? data : [];
         this.hasNextPage = list.length > this.perPage;
-        this.quarteis = list.slice(0, this.perPage);
+        this.items = list.slice(0, this.perPage);
       } catch (err) {
-        this.quarteis = [];
+        this.items = [];
         this.hasNextPage = false;
-        this.errorMessage = err.response?.data?.detail || err.message || 'Erro ao carregar quarteis.';
+        this.errorMessage = err.response?.data?.detail || err.message || 'Erro ao carregar primeiros socorros.';
         this.showErrorModal = true;
       } finally {
         this.loading = false;
@@ -261,8 +252,8 @@ export default {
       this.fetchList(1);
     },
     clearFilters() {
-      this.filterNome = '';
-      this.filterTipo = '';
+      this.filterTitulo = '';
+      this.filterCategoria = '';
       this.filterAtivo = null;
       this.fetchList(1);
     },
@@ -270,45 +261,37 @@ export default {
       if (page < 1) return;
       this.fetchList(page);
     },
-    openForm(quartel = null) {
-      this.quartelToEdit = quartel;
+    openForm(item = null) {
+      this.itemToEdit = item;
       this.showFormModal = true;
     },
-    openDelete(quartel) {
-      this.quartelToDelete = quartel;
+    openDelete(item) {
+      this.itemToDelete = item;
       this.showDeleteModal = true;
     },
     openView(id) {
-      this.quartelToViewId = id;
+      this.itemToViewId = id;
       this.showViewModal = true;
     },
-    async onFormSaved({ id, payload }) {
-      try {
-        if (id) {
-          await api.patch(`/quarteis/${id}`, payload);
-        } else {
-          await api.post('/quarteis/', payload);
-        }
-        this.showFormModal = false;
-        const nome = payload?.nome || '';
-        this.successMessage = id
-          ? `Quartel "${nome}" atualizado com sucesso.`
-          : `Quartel "${nome}" cadastrado com sucesso.`;
-        this.showSuccessModal = true;
-        await this.fetchList(this.currentPage);
-      } catch (err) {
-        this.errorMessage = err.response?.data?.detail || err.message || 'Erro ao guardar.';
-        this.showErrorModal = true;
-      }
+    onFormSaved() {
+      this.showFormModal = false;
+      this.successMessage = 'Registo guardado com sucesso.';
+      this.showSuccessModal = true;
+      this.fetchList(this.currentPage);
+    },
+    onFormError(message) {
+      this.showFormModal = false;
+      this.errorMessage = message || 'Erro ao guardar.';
+      this.showErrorModal = true;
     },
     async onDeleteConfirm(id) {
-      const nomeQuartel = this.quartelToDelete?.nome || 'Quartel';
+      const titulo = this.itemToDelete?.titulo || 'Primeiros socorros';
       try {
-        await api.delete(`/quarteis/${id}`);
+        await api.delete(`/${BASE}/${id}`);
         this.showDeleteModal = false;
-        this.successMessage = `Quartel "${nomeQuartel}" eliminado com sucesso.`;
+        this.successMessage = `"${titulo}" eliminado com sucesso.`;
         this.showSuccessModal = true;
-        await this.fetchList(this.currentPage);
+        this.fetchList(this.currentPage);
       } catch (err) {
         this.errorMessage = err.response?.data?.detail || err.message || 'Erro ao eliminar.';
         this.showErrorModal = true;

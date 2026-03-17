@@ -2,67 +2,40 @@
 import { layoutMethods } from "@/state/helpers";
 import simplebar from "simplebar-vue";
 
-import i18n from "../i18n";
-
 /**
  * Nav-bar Component
  */
 export default {
   data() {
     return {
-      languages: [{
-        flag: require("@/assets/images/flags/us.svg"),
-        language: "en",
-        title: "English",
-      },
-      {
-        flag: require("@/assets/images/flags/spain.svg"),
-        language: "sp",
-        title: "Española",
-      },
-      {
-        flag: require("@/assets/images/flags/germany.svg"),
-        language: "gr",
-        title: "Deutsche",
-      },
-      {
-        flag: require("@/assets/images/flags/italy.svg"),
-        language: "it",
-        title: "italiana",
-      },
-      {
-        flag: require("@/assets/images/flags/russia.svg"),
-        language: "ru",
-        title: "русский",
-      },
-      {
-        flag: require("@/assets/images/flags/china.svg"),
-        language: "ch",
-        title: "中國人",
-      },
-      {
-        flag: require("@/assets/images/flags/french.svg"),
-        language: "fr",
-        title: "Français",
-      },
-      {
-        flag: require("@/assets/images/flags/ae.svg"),
-        language: "ar",
-        title: "Arabic",
-      },
-      ],
-      lan: i18n.locale,
-      text: null,
-      flag: null,
-      value: null,
-      myVar: 1,
+      defaultAvatar: require("@/assets/images/users/user-dummy-img.jpg"),
+      flagAngola: require("@/assets/images/flags/ao.svg"),
     };
+  },
+  computed: {
+    userInfo() {
+      try {
+        const raw = localStorage.getItem("user");
+        if (!raw) return { displayName: "Utilizador", typeLabel: "—" };
+        const user = JSON.parse(raw);
+        const displayName = user.nome || user.email || "Utilizador";
+        const typeLabel = this.tipoLabel(user.role);
+        return { displayName, typeLabel };
+      } catch {
+        return { displayName: "Utilizador", typeLabel: "—" };
+      }
+    },
   },
   components: {
     simplebar
   },
 
   methods: {
+    tipoLabel(role) {
+      if (!role) return "—";
+      const map = { admin: "Administrador", autoridade: "Autoridade", superadmin: "Super Admin" };
+      return map[role] || String(role);
+    },
     ...layoutMethods,
     toggleHamburgerMenu() {
       var windowSize = document.documentElement.clientWidth;
@@ -143,13 +116,6 @@ export default {
         }
       }
     },
-    setLanguage(locale, country, flag) {
-      this.lan = locale;
-      this.text = country;
-      this.flag = flag;
-      document.getElementById("header-lang-img").setAttribute("src", flag);
-      i18n.global.locale = locale;
-    },
     toggleDarkMode() {
 
       if (document.documentElement.getAttribute("data-bs-theme") == "dark") {
@@ -166,15 +132,6 @@ export default {
   },
 
   mounted() {
-    if (process.env.VUE_APP_I18N_LOCALE) {
-      this.flag = process.env.VUE_APP_I18N_LOCALE;
-      this.languages.forEach((item) => {
-        if (item.language == this.flag) {
-          document.getElementById("header-lang-img").setAttribute("src", item.flag);
-        }
-      });
-    }
-
     document.addEventListener("scroll", function () {
       var pageTopbar = document.getElementById("page-topbar");
       if (pageTopbar) {
@@ -227,20 +184,9 @@ export default {
         </div>
 
         <div class="d-flex align-items-center">
-          <BDropdown class="dropdown" variant="ghost-secondary" dropstart
-            :offset="{ alignmentAxis: 55, crossAxis: 15, mainAxis: -50 }"
-            toggle-class="btn btn-icon btn-topbar btn-ghost-secondary rounded-circle arrow-none"
-            menu-class="dropdown-menu-end">
-            <template #button-content> <img id="header-lang-img" src="@/assets/images/flags/us.svg" alt="Header Language"
-                height="20" class="rounded">
-            </template>
-            <BLink href="javascript:void(0);" class="dropdown-item notify-item language py-2"
-              v-for="(entry, key) in languages" :data-lang="entry.language" :title="entry.title"
-              @click="setLanguage(entry.language, entry.title, entry.flag)" :key="key">
-              <img :src="entry.flag" alt="user-image" class="me-2 rounded" height="18">
-              <span class="align-middle">{{ entry.title }}</span>
-            </BLink>
-          </BDropdown>
+          <div class="header-item d-none d-sm-flex" title="Angola">
+            <img :src="flagAngola" alt="Angola" height="20" class="rounded" />
+          </div>
 
           <div class="ms-1 header-item d-none d-sm-flex">
             <BButton type="button" variant="ghost-secondary" class="btn-icon btn-topbar rounded-circle"
@@ -530,48 +476,34 @@ export default {
             menu-class="dropdown-menu-end" :offset="{ alignmentAxis: -14, crossAxis: 0, mainAxis: 0 }">
             <template #button-content>
               <span class="d-flex align-items-center">
-                <img class="rounded-circle header-profile-user" src="@/assets/images/users/avatar-1.jpg"
-                  alt="Header Avatar">
+                <img class="rounded-circle header-profile-user" :src="defaultAvatar" alt="Avatar">
                 <span class="text-start ms-xl-2">
-                  <span class="d-none d-xl-inline-block ms-1 fw-medium user-name-text">Edward
-                    Diana</span>
-                  <span class="d-none d-xl-block ms-1 fs-12 user-name-sub-text">Founder</span>
+                  <span class="d-none d-xl-inline-block ms-1 fw-medium user-name-text">{{ userInfo.displayName }}</span>
+                  <span class="d-none d-xl-block ms-1 fs-12 user-name-sub-text">{{ userInfo.typeLabel }}</span>
                 </span>
               </span>
             </template>
-            <h6 class="dropdown-header">Welcome Anna!</h6>
+            <h6 class="dropdown-header">{{ userInfo.displayName }}</h6>
             <router-link class="dropdown-item" to="/pages/profile"><i
                 class="mdi mdi-account-circle text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle"> Profile</span>
+              <span class="align-middle"> Perfil</span>
             </router-link>
             <router-link class="dropdown-item" to="/chat">
               <i class=" mdi mdi-message-text-outline text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle"> Messages</span>
-            </router-link>
-            <router-link class="dropdown-item" to="/apps/tasks-kanban">
-              <i class="mdi mdi-calendar-check-outline text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle"> Taskboard</span>
+              <span class="align-middle"> Mensagens</span>
             </router-link>
             <router-link class="dropdown-item" to="/pages/faqs"><i
                 class="mdi mdi-lifebuoy text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle"> Help</span>
+              <span class="align-middle"> Ajuda</span>
             </router-link>
             <div class="dropdown-divider"></div>
-            <router-link class="dropdown-item" to="/pages/profile"><i
-                class="mdi mdi-wallet text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle"> Balance : <b>$5971.67</b></span>
-            </router-link>
             <router-link class="dropdown-item" to="/pages/profile-setting">
-              <BBadge variant="success-subtle" class="bg-success-subtle text-success mt-1 float-end">New</BBadge><i
+              <BBadge variant="success-subtle" class="bg-success-subtle text-success mt-1 float-end">Novo</BBadge><i
                 class="mdi mdi-cog-outline text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle"> Settings</span>
-            </router-link>
-            <router-link class="dropdown-item" to="/auth/lockscreen-basic"><i
-                class="mdi mdi-lock text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle"> Lock screen</span>
+              <span class="align-middle"> Definições</span>
             </router-link>
             <router-link class="dropdown-item" to="/logout"><i class="mdi mdi-logout text-muted fs-16 align-middle me-1"></i>
-              <span class="align-middle" data-key="t-logout"> Logout</span>
+              <span class="align-middle" data-key="t-logout"> Terminar sessão</span>
             </router-link>
           </BDropdown>
         </div>

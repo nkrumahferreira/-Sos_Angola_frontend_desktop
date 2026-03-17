@@ -239,6 +239,12 @@ export default {
           </router-link>
         </li>
         <li class="nav-item">
+          <router-link to="/primeiros-socorros" class="nav-link">
+            <i class="ri-first-aid-kit-line"></i>
+            <span>Primeiros Socorros</span>
+          </router-link>
+        </li>
+        <li class="nav-item">
           <router-link to="/autoridade" class="nav-link">
             <i class="ri-user-star-line"></i>
             <span>Autoridades</span>
